@@ -1,0 +1,123 @@
+---
+title: "Data analysis"
+author: "jvicentem"
+date: "23 May 2017"
+output: html_document
+---
+
+I'll try to use the following dataset: https://www.kaggle.com/mirosval/personal-cars-classifieds
+
+Dataset variables explanation:
+
+There are roughly 3,5 Million rows and the following columns:
+
+maker - normalized all lowercase
+model - normalized all lowercase
+mileage - in KM
+manufacture_year
+engine_displacement (https://en.wikipedia.org/wiki/Engine_displacement) - in ccm
+engine_power - in kW
+body_type - almost never present, but I scraped only personal cars, no motorcycles or utility vehicles
+color_slug - also almost never present
+stk_year - year of the last emission control
+transmission - automatic or manual
+door_count
+seat_count
+fuel_type - gasoline, diesel, cng, lpg, electric
+date_created - when the ad was scraped
+date_last_seen - when the ad was last seen. Our policy was to remove all ads older than 60 days
+price_eur - list price converted to EUR
+
+```{r import-libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+#library(devtools)
+#install_github("ujjwalkarn/xda")
+```
+
+```{r read}
+dataset <- read.csv("./assets/all_anonymized_2015_11_2017_03.csv", sep = ",", header=TRUE, na.strings = c('None', ''))
+```
+
+```{r vars-as-factors}
+dataset$maker <- relevel( as.factor(dataset$maker), ref = 'skoda') 
+dataset$model <- relevel( as.factor(dataset$model), ref = 'octavia') 
+dataset$manufacture_year <- relevel( as.factor(dataset$manufacture_year), ref = '2015') 
+dataset$body_type <- relevel( as.factor(dataset$body_type), ref = 'other') 
+dataset$color_slug <- relevel( as.factor(dataset$color_slug), ref = 'black') 
+dataset$stk_year <- relevel( as.factor(dataset$stk_year), ref = '2018') 
+dataset$transmission <- relevel( as.factor(dataset$transmission), ref = 'man') 
+dataset$fuel_type <- relevel( as.factor(dataset$fuel_type), ref = 'gasoline') 
+dataset$date_created <- as.POSIXct( dataset$date_created )
+
+#  %>% strptime(format="%Y-%m-%d %H:%M:%OS%z")
+
+dataset <- dataset %>% select(-date_last_seen)
+```
+
+```{r char-summary}
+xda::charSummary(dataset)
+```
+
+color_slug and stk_year: more than 80% of NA. I'm gonna remove those variables.
+
+```{r removing_variables}
+dataset <- dataset %>% select(-color_slug, -stk_year)
+```
+
+```{r num-summary}
+xda::numSummary(dataset)
+```
+
+0. Filtering and fixing wrong values
+
+```{r filtering}
+dataset <- dataset %>% filter(seat_count < 22 & seat_count > 0 & door_count < 7 & door_count > 0) # There are vans with many seats, but more than 21 is very rare (buses and lorries aside). The same applies to the number of doors.
+
+# Removing wrong engine displacements and fixing some of them
+dataset <- dataset %>% filter(engine_displacement > 897) %>%
+            filter(engine_displacement >= 10000 | engine_displacement < 7000)
+
+dataset$engine_displacement <- ifelse( dataset$engine_displacement >= 10000, 
+                                       dataset$engine_displacement / 10, 
+                                       dataset$engine_displacement )
+
+```
+
+```{r num-summary2}
+xda::numSummary(dataset)
+```
+
+```{r filtering-num-vars-na}
+dataset <- dataset %>% tidyr::drop_na(mileage)
+dataset <- dataset %>% tidyr::drop_na(engine_power)
+```
+
+```{r summaries}
+xda::charSummary(dataset)
+xda::numSummary(dataset)
+```
+
+1. NA Imputation: multiple data sets
+
+```{r exploring-mv}
+options(scipen=999)
+
+mv_plot <- aggr(dataset %>% select(model, maker, manufacture_year, body_type, transmission, fuel_type), col=c('navyblue', 'red'), numbers=TRUE, sortVars=TRUE, labels=names(dataset), cex.axis=.5, prop=TRUE, bars=TRUE, combined=FALSE, cex.numbers=0.6, cex.lab = 0.7, gap=0.8)
+
+
+
+
+options(scipen=0)
+```
+
+
+# 2. Normalization and maybe log transformation
+
+```{r}
+hist(dataset$mileage)
+hist(dataset$engine_displacement)
+hist(dataset$engine_power)
+hist(dataset$door_count)
+hist(dataset$seat_count)
+hist(dataset$price_eur)
+```
