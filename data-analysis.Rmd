@@ -102,6 +102,8 @@ dataset$engine_displacement <- ifelse( dataset$engine_displacement >= 10000,
                                        dataset$engine_displacement )
 
 dataset <- dataset %>% filter(price_eur > 999) %>% filter(price_eur < 1050000)
+
+dataset <- dataset %>% filter(manufacture_year != 1015 & manufacture_year != 0)
 ```
 
 ```{r num-summary2}
@@ -126,9 +128,6 @@ options(scipen=999)
 factors_dataset <- dataset %>% select(model, maker, manufacture_year, body_type, transmission, fuel_type)
 
 mv_plot <- aggr(factors_dataset, col=c('navyblue', 'red'), numbers=TRUE, sortVars=TRUE, labels=names(factors_dataset), cex.axis=.5, prop=TRUE, bars=TRUE, combined=FALSE, cex.numbers=0.6, cex.lab = 0.7, gap=0.8)
-
-
-
 
 options(scipen=0)
 ```
@@ -227,4 +226,18 @@ train <- train_and_test$train
 test <- train_and_test$test
 ```
 
+```{r exploring-training-set}
+xda::charSummary(train)
+xda::numSummary(train)
+```
+
+```{r relevel-train-factors}
+train$maker <- relevel( as.factor(train$maker), ref = 'volkswagen') 
+train$model <- relevel( as.factor(train$model), ref = 'golf') 
+train$manufacture_year <- relevel( as.factor(train$manufacture_year), ref = '2015') 
+train$body_type <- relevel( as.factor(train$body_type), ref = 'other') 
+train$stk_year <- relevel( as.factor(train$stk_year), ref = '2018') 
+train$transmission <- relevel( as.factor(train$transmission), ref = 'man') 
+train$fuel_type <- relevel( as.factor(train$fuel_type), ref = 'gasoline') 
+```
 
