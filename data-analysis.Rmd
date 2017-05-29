@@ -1,0 +1,230 @@
+---
+title: "Data analysis"
+author: "jvicentem"
+date: "23 May 2017"
+output: html_document
+---
+
+I'll try to use the following dataset: https://www.kaggle.com/mirosval/personal-cars-classifieds
+
+Dataset variables explanation:
+
+There are roughly 3,5 Million rows and the following columns:
+
+maker - normalized all lowercase
+model - normalized all lowercase
+mileage - in KM
+manufacture_year
+engine_displacement (https://en.wikipedia.org/wiki/Engine_displacement) - in ccm
+engine_power - in kW
+body_type - almost never present, but I scraped only personal cars, no motorcycles or utility vehicles
+color_slug - also almost never present
+stk_year - year of the last emission control
+transmission - automatic or manual
+door_count
+seat_count
+fuel_type - gasoline, diesel, cng, lpg, electric
+date_created - when the ad was scraped
+date_last_seen - when the ad was last seen. Our policy was to remove all ads older than 60 days
+price_eur - list price converted to EUR
+
+```{r import-libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+#devtools::install_github("ujjwalkarn/xda")
+library(VIM)
+library(doMC)
+registerDoMC(cores = 4)
+#devtools::install_github("vsimko/corrplot")
+library(tidyverse)
+library(corrplot)
+library(ggplot2)
+```
+
+```{r read}
+dataset <- read.csv("./assets/all_anonymized_2015_11_2017_03.csv", sep = ",", header=TRUE, na.strings = c('None', ''))
+```
+
+```{r vars-as-factors}
+dataset$maker <- as.factor(dataset$maker)
+
+
+dataset$model <- as.factor(dataset$model)
+
+
+dataset$manufacture_year <- as.factor(dataset$manufacture_year)
+
+
+dataset$body_type <- as.factor(dataset$body_type)
+
+
+dataset$color_slug <- as.factor(dataset$color_slug)
+
+
+dataset$stk_year <- as.factor(dataset$stk_year)
+
+
+dataset$transmission <- as.factor(dataset$transmission)
+
+
+dataset$fuel_type <- as.factor(dataset$fuel_type)
+
+
+dataset$date_created <- as.POSIXct( dataset$date_created )
+
+dataset <- dataset %>% select(-date_last_seen) 
+```
+
+```{r char-summary}
+xda::charSummary(dataset)
+```
+
+color_slug and stk_year: more than 80% of NA. I'm gonna remove those variables.
+
+```{r removing_variables}
+dataset <- dataset %>% select(-color_slug, -stk_year)
+```
+
+```{r num-summary}
+xda::numSummary(dataset)
+```
+
+0. Filtering and fixing wrong values
+
+```{r filtering}
+dataset <- dataset %>% filter(seat_count < 22 & seat_count > 0 & door_count < 7 & door_count > 0) # There are vans with many seats, but more than 21 is very rare (buses and lorries aside). The same applies to the number of doors.
+
+# Removing wrong engine displacements and fixing some of them
+dataset <- dataset %>% filter(engine_displacement > 897) %>%
+            filter(engine_displacement >= 10000 | engine_displacement < 7000)
+
+dataset$engine_displacement <- ifelse( dataset$engine_displacement >= 10000, 
+                                       dataset$engine_displacement / 10, 
+                                       dataset$engine_displacement )
+
+dataset <- dataset %>% filter(price_eur > 999) %>% filter(price_eur < 1050000)
+```
+
+```{r num-summary2}
+xda::numSummary(dataset)
+```
+
+```{r filtering-num-vars-na}
+dataset <- dataset %>% tidyr::drop_na(mileage)
+dataset <- dataset %>% tidyr::drop_na(engine_power)
+```
+
+```{r summaries}
+xda::charSummary(dataset)
+xda::numSummary(dataset)
+```
+
+1. NA Imputation: multiple data sets
+
+```{r exploring-mv}
+options(scipen=999)
+
+factors_dataset <- dataset %>% select(model, maker, manufacture_year, body_type, transmission, fuel_type)
+
+mv_plot <- aggr(factors_dataset, col=c('navyblue', 'red'), numbers=TRUE, sortVars=TRUE, labels=names(factors_dataset), cex.axis=.5, prop=TRUE, bars=TRUE, combined=FALSE, cex.numbers=0.6, cex.lab = 0.7, gap=0.8)
+
+
+
+
+options(scipen=0)
+```
+
+There are some combinations above 9%... Can they be considered MAR?
+
+Imputing missing values by retrieving missing info from other cars with same model and maker:
+
+```{r mv-impuation}
+Mode <- function(x) {
+  tbl <- table(x)
+  
+  mode <- tbl == max(tbl)
+  names(mode)[mode][1]
+}
+
+maker_model_pairs <- unique(dataset[c('maker', 'model')]) %>% na.omit(.)
+
+rows_with_no_nas <- dataset %>% filter(!is.na(fuel_type) & !is.na(body_type) & !is.na(manufacture_year) & !is.na(transmission) & !is.na(model) & !is.na(maker))
+
+result <- data.frame( maker = NA, model= NA, mileage = NA,   manufacture_year = NA, engine_displacement= NA, engine_power   = NA,  body_type    = NA,transmission  = NA,  door_count    = NA, seat_count    = NA, fuel_type = NA, date_created  = NA, price_eur= NA)
+
+for (i in 1:nrow(maker_model_pairs)) {
+  #print(paste(i, " of", nrow(maker_model_pairs)))
+  this_pair <- maker_model_pairs[i,]
+  
+  rows_with_pair <- dataset %>% filter(maker == as.character(this_pair$maker) & model == as.character(this_pair$model))
+  
+  this_pair_mode_factors <- data.frame(fuel_type = NA, body_type = NA, manufacture_year = NA, transmission = NA)
+  
+  for (col in names(this_pair_mode_factors)) {
+    this_pair_mode_factors[col] <- Mode(rows_with_pair[col])
+  }
+  
+
+  rows_with_pair <- replace_na(rows_with_pair, list(fuel_type = this_pair_mode_factors$fuel_type, 
+                                                body_type = this_pair_mode_factors$body_type, 
+                                                manufacture_year = this_pair_mode_factors$manufacture_year,
+                                                transmission = this_pair_mode_factors$transmission))
+  
+  result <- rbind(result, rows_with_pair)
+}
+
+# There might be NA values after running the lines above
+result_no_na <- tidyr::drop_na(result)
+```
+
+# 2. Normalization and maybe standarization
+
+```{r transformation}
+result_no_na <- result_no_na %>% select(-date_created)
+
+hist(result_no_na$mileage)
+hist(result_no_na$engine_displacement)
+hist(result_no_na$engine_power)
+hist(result_no_na$door_count)
+hist(result_no_na$seat_count)
+hist(result_no_na$price_eur)
+
+result_no_na_transf <- result_no_na
+result_no_na_transf$mileage <- log1p(result_no_na_transf$mileage)
+result_no_na_transf$engine_displacement <- log1p(result_no_na_transf$engine_displacement)
+result_no_na_transf$engine_power <- log1p(result_no_na_transf$engine_power)
+
+num_cols <- colnames(result_no_na[,which(sapply(result_no_na, is.numeric))])
+result_no_na_norm <- result_no_na_transf %>% mutate_each_(funs((.-min(.))/(max(.)-min(.))), num_cols[1:5])
+```
+
+```{r boxplots}
+boxplot(price_eur~fuel_type, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs fuel_type")
+boxplot(price_eur~body_type, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs body_type")
+boxplot(price_eur~manufacture_year, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs manufacture_year")
+boxplot(price_eur~transmission, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs transmission")
+```
+
+# 3. Correlations
+
+```{r cors}
+corrs <- cor(x = result_no_na_norm[num_cols])
+
+corrplot(corrs, method="ellipse", type="upper")
+
+corrs
+```
+
+# Train and set
+
+```{r train-set}
+sample_seed <- "30092016"
+
+train_ratio <- 0.7
+
+train_and_test <- StatMeasures::splitdata(result_no_na_norm, train_ratio, seed = sample_seed)
+
+train <- train_and_test$train
+test <- train_and_test$test
+```
+
+
