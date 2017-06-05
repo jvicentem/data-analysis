@@ -38,6 +38,7 @@ registerDoMC(cores = 4)
 library(tidyverse)
 library(corrplot)
 library(ggplot2)
+library(caret)
 ```
 
 ```{r read}
@@ -239,5 +240,61 @@ train$body_type <- relevel( as.factor(train$body_type), ref = 'other')
 train$stk_year <- relevel( as.factor(train$stk_year), ref = '2018') 
 train$transmission <- relevel( as.factor(train$transmission), ref = 'man') 
 train$fuel_type <- relevel( as.factor(train$fuel_type), ref = 'gasoline') 
+```
+
+# 4. Linear Regression
+
+```{r stratification}
+
+stratify <- function() {
+  set.seed(as.character(round(runif(1) * 10000)))
+  
+  strata <- createDataPartition(y = train$price_eur, 
+                                 p = 0.055, list = F)
+  strata <- train[strata,]
+  
+  return(strata)
+}
+
+n <- 1:10
+stratas <- foreach(i=n) %do% stratify()
+
+set.seed("30092016")
+```
+
+```{r lr-1}
+lm_for_stratas <- function(x, y, i) {
+  strata <- stratas[[i]]
+  
+  strata_train_idx <- createDataPartition(y = strata$price_eur, 
+                                   p = 0.7, list = F)
+  
+  strata_train <- strata[strata_train_idx,]
+  strata_test <- strata[-strata_train_idx,]
+  
+  trControlCv <- trainControl(method = 'cv', number = 10)
+  trControlNone <- trainControl(method = 'none')
+  
+  sat_lm <- train(x = strata_train[, x],
+                  y = strata_train[, y],
+                  method = 'lm',
+                  trControl = trControlNone,
+                  allowParallel = FALSE
+            )
+  
+  sat_lm$test_data <- strata_test
+  
+  print(summary(sat_lm))
+  print('-------------------------------------------------------------------- \n')
+  return(sat_lm)
+}
+
+sat_lm_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'model', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count', 'seat_count', 'fuel_type'), y = 'price_eur', i)
+
+lm2_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count', 'seat_count', 'fuel_type'), y = 'price_eur', i)
+
+lm3_models <- foreach(i=n) %do% lm_for_stratas(x = c('mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count'), y = 'price_eur', i)
+
+# Should I group levels in manufacture_year?
 ```
 
