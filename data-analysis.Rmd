@@ -32,13 +32,14 @@ price_eur - list price converted to EUR
 library(dplyr)
 #devtools::install_github("ujjwalkarn/xda")
 library(VIM)
-library(doMC)
-registerDoMC(cores = 4)
+#library(doMC)
+#registerDoMC(cores = 4)
 #devtools::install_github("vsimko/corrplot")
 library(tidyverse)
 library(corrplot)
 library(ggplot2)
 library(caret)
+library(foreach)
 ```
 
 ```{r read}
@@ -50,9 +51,6 @@ dataset$maker <- as.factor(dataset$maker)
 
 
 dataset$model <- as.factor(dataset$model)
-
-
-dataset$manufacture_year <- as.factor(dataset$manufacture_year)
 
 
 dataset$body_type <- as.factor(dataset$body_type)
@@ -74,6 +72,32 @@ dataset$date_created <- as.POSIXct( dataset$date_created )
 
 dataset <- dataset %>% select(-date_last_seen) 
 ```
+
+```{r binding-years}
+# 2010 and newer
+# [2000- 2009]
+# [1990 - 1999]
+# [1980 - 1989]
+# [1970 - 1979]
+# < 1970 OLD
+
+dataset$manufacture_year_bin <- ifelse(as.integer(dataset$manufacture_year) >= 2010, '2010s',
+                                         ifelse(as.integer(dataset$manufacture_year) >= 2000, '2000s',
+                                                ifelse(as.integer(dataset$manufacture_year) >= 1990, '1990s', 
+                                                       ifelse(as.integer(dataset$manufacture_year) >= 1980, '1980s', 
+                                                              ifelse(as.integer(dataset$manufacture_year) >= 1970, '1970s', 'before_1970'
+                                                                     )
+                                                              )
+                                                       )
+                                                )
+                                         )
+
+dataset$manufacture_year <- as.factor(dataset$manufacture_year)
+
+dataset$manufacture_year_bin <- as.factor(dataset$manufacture_year_bin)
+                              
+```
+
 
 ```{r char-summary}
 xda::charSummary(dataset)
@@ -104,7 +128,7 @@ dataset$engine_displacement <- ifelse( dataset$engine_displacement >= 10000,
 
 dataset <- dataset %>% filter(price_eur > 999) %>% filter(price_eur < 1050000)
 
-dataset <- dataset %>% filter(manufacture_year != 1015 & manufacture_year != 0)
+dataset <- dataset %>% filter(manufacture_year != '1015' & manufacture_year != '0')
 ```
 
 ```{r num-summary2}
@@ -149,7 +173,7 @@ maker_model_pairs <- unique(dataset[c('maker', 'model')]) %>% na.omit(.)
 
 rows_with_no_nas <- dataset %>% filter(!is.na(fuel_type) & !is.na(body_type) & !is.na(manufacture_year) & !is.na(transmission) & !is.na(model) & !is.na(maker))
 
-result <- data.frame( maker = NA, model= NA, mileage = NA,   manufacture_year = NA, engine_displacement= NA, engine_power   = NA,  body_type    = NA,transmission  = NA,  door_count    = NA, seat_count    = NA, fuel_type = NA, date_created  = NA, price_eur= NA)
+result <- data.frame( maker = NA, model= NA, mileage = NA,   manufacture_year = NA, engine_displacement= NA, engine_power   = NA,  body_type    = NA,transmission  = NA,  door_count    = NA, seat_count    = NA, fuel_type = NA, date_created  = NA, price_eur= NA, manufacture_year_bin = NA)
 
 for (i in 1:nrow(maker_model_pairs)) {
   #print(paste(i, " of", nrow(maker_model_pairs)))
@@ -201,6 +225,7 @@ result_no_na_norm <- result_no_na_transf %>% mutate_each_(funs((.-min(.))/(max(.
 boxplot(price_eur~fuel_type, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs fuel_type")
 boxplot(price_eur~body_type, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs body_type")
 boxplot(price_eur~manufacture_year, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs manufacture_year")
+boxplot(price_eur~manufacture_year_bin, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs manufacture_year_bin")
 boxplot(price_eur~transmission, data=result_no_na_norm %>% filter(price_eur < 20000), main="Price vs transmission")
 ```
 
@@ -236,8 +261,8 @@ xda::numSummary(train)
 train$maker <- relevel( as.factor(train$maker), ref = 'volkswagen') 
 train$model <- relevel( as.factor(train$model), ref = 'golf') 
 train$manufacture_year <- relevel( as.factor(train$manufacture_year), ref = '2015') 
+train$manufacture_year_bin <- relevel( as.factor(train$manufacture_year_bin), ref = '2010s') 
 train$body_type <- relevel( as.factor(train$body_type), ref = 'other') 
-train$stk_year <- relevel( as.factor(train$stk_year), ref = '2018') 
 train$transmission <- relevel( as.factor(train$transmission), ref = 'man') 
 train$fuel_type <- relevel( as.factor(train$fuel_type), ref = 'gasoline') 
 ```
@@ -283,6 +308,7 @@ lm_for_stratas <- function(x, y, i) {
             )
   
   sat_lm$test_data <- strata_test
+  sat_lm$train_data <- strata_train
   
   print(summary(sat_lm))
   print('-------------------------------------------------------------------- \n')
@@ -293,8 +319,68 @@ sat_lm_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'model', 'milea
 
 lm2_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count', 'seat_count', 'fuel_type'), y = 'price_eur', i)
 
-lm3_models <- foreach(i=n) %do% lm_for_stratas(x = c('mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count'), y = 'price_eur', i)
+lm3_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count', 'fuel_type'), y = 'price_eur', i)
 
-# Should I group levels in manufacture_year?
+lm4_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count'), y = 'price_eur', i)
+
+print('Saturated model\'s R² and mean R²')
+sat_lm_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(sat_lm_models[[i]])$adj.r.squared
+print(sat_lm_models_r_adjs)
+mean(sat_lm_models_r_adjs)
+
+print('Model 2\'s R² and mean R²')
+lm2_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(lm2_models[[i]])$adj.r.squared
+print(lm2_models_r_adjs)
+mean(lm2_models_r_adjs)
+
+print('Model 3\'s R² and mean R²')
+lm3_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(lm3_models[[i]])$adj.r.squared
+print(lm3_models_r_adjs)
+mean(lm3_models_r_adjs)
+
+print('Model 4\'s R² and mean R²')
+lm4_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(lm4_models[[i]])$adj.r.squared
+print(lm4_models_r_adjs)
+mean(lm4_models_r_adjs)
+
+
 ```
 
+```{r anovas}
+foreach(i=n) %do% anova(lm3_models[[i]]$finalModel)
+foreach(i=n) %do% car::Anova(lm3_models[[i]]$finalModel)
+```
+
+```{r MSE}
+mse <- function(i, test=FALSE, models) {
+        if (!test) {
+          Yhat <- predict(models[[i]], models[[i]]$train_data)
+          Yreal <- models[[i]]$train_data$price_eur    
+        } else {
+          manufacture_year_unique_vals <- unique(models[[i]]$train_data$manufacture_year)
+          maker_unique_vals <- unique(models[[i]]$train_data$maker)
+          
+          test_i <- models[[i]]$test_data %>% filter((manufacture_year %in% manufacture_year_unique_vals) & (maker %in% maker_unique_vals))
+          
+          Yhat <- predict(models[[i]], test_i)
+          Yreal <- test_i$price_eur
+        }
+        
+        mse_v <- mean((Yreal - Yhat)^2)
+        
+        mae <- sum(abs(Yreal - Yhat))/length(Yreal)
+        
+        print(paste('MSE: ', mse_v ))
+        print(paste('RMSE: ' , sqrt(mse_v)) )
+        print(paste('MAE: ', mae ))
+        print('---------------------------------------')
+}
+
+print('MSE, RMSE and MAE for train')
+foreach(i=n) %do% mse(i, test=FALSE, lm3_models)
+print('MSE, RMSE and MAE for test')
+foreach(i=n) %do% mse(i, test=TRUE, lm3_models)
+
+```
+
+MSE values are inadmissible.
