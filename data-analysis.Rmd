@@ -322,7 +322,9 @@ lm2_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufa
 lm3_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count', 'fuel_type'), y = 'price_eur', i)
 
 lm4_models <- foreach(i=n) %do% lm_for_stratas(x = c('maker', 'mileage', 'manufacture_year', 'engine_displacement', 'engine_power', 'body_type', 'transmission', 'door_count'), y = 'price_eur', i)
+```
 
+```{r rsquareds}
 print('Saturated model\'s R² and mean R²')
 sat_lm_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(sat_lm_models[[i]])$adj.r.squared
 print(sat_lm_models_r_adjs)
@@ -342,13 +344,13 @@ print('Model 4\'s R² and mean R²')
 lm4_models_r_adjs <- foreach(i=n, .combine = c) %do% summary(lm4_models[[i]])$adj.r.squared
 print(lm4_models_r_adjs)
 mean(lm4_models_r_adjs)
-
-
 ```
 
+I'm gonna use lm4_models because when run the lines above it had the best R² having in mind the number of variables.
+
 ```{r anovas}
-foreach(i=n) %do% anova(lm3_models[[i]]$finalModel)
-foreach(i=n) %do% car::Anova(lm3_models[[i]]$finalModel)
+foreach(i=n) %do% anova(lm4_models[[i]]$finalModel)
+foreach(i=n) %do% car::Anova(lm4_models[[i]]$finalModel)
 ```
 
 ```{r MSE}
@@ -361,6 +363,8 @@ mse <- function(i, test=FALSE, models) {
           maker_unique_vals <- unique(models[[i]]$train_data$maker)
           
           test_i <- models[[i]]$test_data %>% filter((manufacture_year %in% manufacture_year_unique_vals) & (maker %in% maker_unique_vals))
+          
+          models[[i]]$test_data <-test_i
           
           Yhat <- predict(models[[i]], test_i)
           Yreal <- test_i$price_eur
@@ -377,10 +381,27 @@ mse <- function(i, test=FALSE, models) {
 }
 
 print('MSE, RMSE and MAE for train')
-foreach(i=n) %do% mse(i, test=FALSE, lm3_models)
+foreach(i=n) %do% mse(i, test=FALSE, lm4_models)
 print('MSE, RMSE and MAE for test')
-foreach(i=n) %do% mse(i, test=TRUE, lm3_models)
+foreach(i=n) %do% mse(i, test=TRUE, lm4_models)
 
 ```
 
 MSE values are inadmissible.
+
+```{r conf-int-estimators}
+foreach(i=n) %do% confint(lm4_models[[i]]$finalModel)
+```
+
+```{r conf-int-pred}
+pred_aux <- as.data.frame(predict(lm4_models[[5]]$finalModel, newdata = lm4_models[[5]]$test_data %>% select(-price_eur), interval='confidence'))
+
+pred_aux <- pred_aux %>% mutate(diff = upr - lwr)
+
+head(pred_aux)
+```
+
+```{r lin-reg-plots}
+foreach(i=n) %do% plot(lm4_models[[i]]$finalModel)
+```
+
