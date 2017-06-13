@@ -40,6 +40,8 @@ library(corrplot)
 library(ggplot2)
 library(caret)
 library(foreach)
+
+library(sparklyr)
 ```
 
 ```{r read}
@@ -403,5 +405,40 @@ head(pred_aux)
 
 ```{r lin-reg-plots}
 foreach(i=n) %do% plot(lm4_models[[i]]$finalModel)
+```
+
+```{r sparklyr}
+.libPaths(c(.libPaths(), '/root/spark/R/lib')) 
+Sys.setenv(SPARK_HOME = '/root/spark') 
+Sys.setenv(PATH = paste(Sys.getenv(c('PATH')), '/root/spark/bin', sep=':')) 
+
+config <- spark_config()
+#config$sparklyr.gateway.port = 1213
+config$`sparklyr.shell.executor-memory` <- "10g"
+config$spark.executor.memory <- "10g"
+config$spark.network.timeout <- '99999s'
+config$spark.executor.heartbeatInterval <- '99999s'
+config$`sparklyr.shell.driver-memory` <- "8g"
+config$spark.yarn.executor.memoryOverhead <- "4g"
+config$spark.rpc.message.maxSize <- "2047"
+
+sc <- spark_connect(master = "spark://xxx.xxx.xxx:7077", version = "2.0.2", config = config)
+
+train$maker <- gsub("-", "", as.factor(train$maker))
+test$maker <- gsub("-", "", as.factor(test$maker))
+
+train_tbl <- sparklyr::copy_to(sc, train, "tbl_train", overwrite=TRUE)
+test_tbl <- sparklyr::copy_to(sc, test, "tbl_test", overwrite=TRUE)
+```
+
+```{r sparklyr-lin-reg}
+ml_create_dummy_variables(train_tbl, input='transmission')
+ml_create_dummy_variables(train_tbl, input='body_type')
+ml_create_dummy_variables(train_tbl, input='fuel_type')
+ml_create_dummy_variables(train_tbl, input='maker')
+
+lm <- ml_linear_regression(train_tbl, "price_eur", c("mileage", "manufacture_year", "engine_displacement", "engine_power", "door_count", "seat_count", 'transmission', 'body_type', 'fuel_type', 'maker'), intercept=TRUE)
+
+summary(lm)
 ```
 
