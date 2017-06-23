@@ -442,3 +442,50 @@ lm <- ml_linear_regression(train_tbl, "price_eur", c("mileage", "manufacture_yea
 summary(lm)
 ```
 
+```{r rf-spark}
+rf <- ml_random_forest(train_tbl, 
+                       'price_eur', 
+                       c("mileage", "manufacture_year", "engine_displacement", "engine_power", "door_count", "seat_count", 'transmission', 'body_type', 'fuel_type', 'maker'), 
+                       max.bins = 2, 
+                       max.depth = 10, 
+                       num.trees = 250, 
+                       type = "regression")
+
+ml_tree_feature_importance(sc, rf)
+
+
+
+test$maker <- gsub("-", "", as.factor(test$maker))
+test_tbl <- sparklyr::copy_to(sc, test, "tbl_test", overwrite=TRUE)
+
+pred_rf <- sdf_predict(rf, test_tbl) %>% collect
+
+pred_table <- select(pred_rf, price_eur, prediction) %>% mutate(diff = abs(prediction - price_eur))
+pred_table
+
+#MAE 
+mean(pred_table$diff)
+```
+
+RF is still a bad solution. From now on I'm gonna remove from training those ads with a price higher than 30,000 €.
+
+```{r filter-train}
+train_tbl <- sparklyr::copy_to(sc, train %>% filter(price_eur <= 30000), "tbl_train", overwrite=TRUE)
+```
+
+```{r rf-again}
+rf <- ml_random_forest(train_tbl, 
+                       'price_eur', 
+                       c("mileage", "manufacture_year", "engine_displacement", "engine_power", "door_count", "seat_count", 'transmission', 'body_type', 'fuel_type', 'maker'), 
+                       max.bins = 2, 
+                       max.depth = 20, 
+                       num.trees = 250, 
+                       type = "regression")
+
+ml_tree_feature_importance(sc, rf)
+
+pred_rf <- sdf_predict(rf, test_tbl) %>% collect
+
+pred_table <- select(pred_rf, price_eur, prediction) %>% mutate(diff = abs(prediction - price_eur))
+pred_table
+```
